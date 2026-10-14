@@ -264,7 +264,7 @@ body[data-mode="edit"] .board {
   position: fixed;
   z-index: 10;
   display: grid;
-  grid-template-columns: repeat(5, 28px);
+  grid-template-columns: repeat(6, 28px);
   gap: 6px;
   padding: 10px;
   border-radius: 8px;

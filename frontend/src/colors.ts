@@ -1,9 +1,9 @@
 import type { Grid } from "./types";
 
 export const PALETTE = [
-  "#800000", "#9A6324", "#808000", "#469990", "#000075",
-  "#e6194B", "#f58231", "#3cb44b", "#42d4f4", "#4363d8",
-  "#911eb4", "#f032e6", "#a9a9a9", "#ffe119", "#bfef45",
+  "#f8b4b4", "#fcd9a8", "#fdf2a2", "#c6efb0", "#a8e6d9", "#a9d4f5",
+  "#c3c6f7", "#e2bdf2", "#f7c1dc", "#d9c7a7", "#b9e0a5", "#9fd8e8",
+  "#f5b7a1", "#cfd8dc", "#e6ee9c", "#b2dfdb", "#ffccbc", "#d1c4e9",
 ];
 
 export type RegionColors = Record<number, string>;
