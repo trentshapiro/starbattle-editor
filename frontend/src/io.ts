@@ -1,3 +1,4 @@
+import { regionColor } from "./colors";
 import { makeGrid, type Mark, MAX_SIZE, MIN_SIZE, type Mode, type Puzzle, type StarCount } from "./types";
 
 const FILE_VERSION = 1;
@@ -26,16 +27,30 @@ export function loadState(): Partial<SavedState> {
   }
 }
 
-export function downloadPuzzle({ size, stars, regions, colors }: Puzzle): void {
-  const present = new Set(regions.flat());
-  const used = Object.fromEntries(Object.entries(colors).filter(([id]) => present.has(Number(id))));
-  const data = { version: FILE_VERSION, size, stars, regions, colors: used };
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `starbattle-${size}x${size}-${stars}star.json`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+const LINK_VERSION = "1";
+const REGION_CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const NO_REGION = "-";
+
+/** Links hold only the grid, regions, and region colors, so opening one always starts with no marks. */
+export function puzzleHash({ size, stars, regions, colors }: Puzzle): string {
+  const ids = [...new Set(regions.flat().filter((id) => id !== null))];
+  if (ids.length > REGION_CHARS.length) throw new Error(`A link can hold at most ${REGION_CHARS.length} regions.`);
+  const cells = regions.flat().map((id) => (id === null ? NO_REGION : REGION_CHARS[ids.indexOf(id)]));
+  const hex = ids.map((id) => regionColor(id, colors).slice(1));
+  return [LINK_VERSION, size, stars, cells.join(""), hex.join("")].join(".");
+}
+
+export function parsePuzzleHash(hash: string): Puzzle {
+  const [version, size, stars, cells = "", hex = "", ...rest] = hash.replace(/^#/, "").split(".");
+  const n = Number(size);
+  if (version !== LINK_VERSION || rest.length || cells.length !== n * n || hex.length % 6) {
+    throw new Error("The link does not contain a puzzle.");
+  }
+  const ids = [...cells].map((ch) => (ch === NO_REGION ? null : REGION_CHARS.indexOf(ch)));
+  const regions = Array.from({ length: n }, (_, r) => ids.slice(r * n, (r + 1) * n));
+  const colors = Object.fromEntries((hex.match(/.{6}/g) ?? []).map((color, id) => [id, `#${color}`]));
+  const layout = parseLayout({ size: n, stars: Number(stars), regions, colors });
+  return { ...layout, marks: makeGrid<Mark>(layout.size, "") };
 }
 
 function isGrid(grid: unknown, size: number, valid: (value: unknown) => boolean): boolean {
@@ -71,12 +86,6 @@ function parseLayout(data: unknown): Omit<Puzzle, "marks"> {
   const isRegion = (v: unknown) => v === null || (typeof v === "number" && Number.isInteger(v) && v >= 0);
   if (!isGrid(regions, size, isRegion)) throw new Error(`Regions must be a ${size}x${size} grid.`);
   return { size, stars: stars as StarCount, regions: regions as Puzzle["regions"], colors: parseColors(colors) };
-}
-
-/** Files hold only the grid, regions, and region colors, so an import always starts with no marks. */
-export function parsePuzzleFile(data: unknown): Puzzle {
-  const layout = parseLayout(data);
-  return { ...layout, marks: makeGrid<Mark>(layout.size, "") };
 }
 
 function parseSavedPuzzle(data: unknown): Puzzle {

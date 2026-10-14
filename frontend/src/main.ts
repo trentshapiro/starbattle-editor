@@ -3,7 +3,7 @@ import { Board, drawGrid } from "./board";
 import { checkPuzzle } from "./check";
 import { PALETTE, regionColor, unusedColor } from "./colors";
 import { History } from "./history";
-import { downloadPuzzle, loadState, parsePuzzleFile, saveState } from "./io";
+import { loadState, parsePuzzleHash, puzzleHash, saveState } from "./io";
 import {
   autoMarks,
   type HorizontalEdge,
@@ -40,9 +40,7 @@ const ui = {
   redo: $<HTMLButtonElement>("redo"),
   clearMarks: $<HTMLButtonElement>("clear-marks"),
   clearRegions: $<HTMLButtonElement>("clear-regions"),
-  exportBtn: $<HTMLButtonElement>("export"),
-  importBtn: $<HTMLButtonElement>("import"),
-  importFile: $<HTMLInputElement>("import-file"),
+  share: $<HTMLButtonElement>("share"),
   check: $<HTMLButtonElement>("check"),
   hint: $("hint"),
   status: $("status"),
@@ -341,14 +339,38 @@ ui.resizeDialog.addEventListener("close", () => {
   });
 });
 
-async function importPuzzle(file: File) {
+function openLink() {
+  if (!location.hash) return;
   try {
-    const next = parsePuzzleFile(JSON.parse(await file.text()));
+    const next = parsePuzzleHash(location.hash);
     clearCheck();
+    mode = "solve";
     change(() => (puzzle = next));
   } catch (e) {
-    alert(`Could not import ${file.name}: ${e instanceof Error ? e.message : e}`);
+    alert(`Could not open the puzzle link: ${e instanceof Error ? e.message : e}`);
   }
+  window.history.replaceState(null, "", location.pathname + location.search);
+}
+
+let shareTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function copyLink() {
+  const url = new URL(location.href);
+  try {
+    url.hash = puzzleHash(puzzle);
+  } catch (e) {
+    alert(e instanceof Error ? e.message : e);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url.href);
+  } catch {
+    prompt("Copy this link:", url.href);
+    return;
+  }
+  ui.share.textContent = "Link copied";
+  clearTimeout(shareTimer);
+  shareTimer = setTimeout(() => (ui.share.textContent = "Copy link"), 1500);
 }
 
 for (let size = MIN_SIZE; size <= MAX_SIZE; size++) ui.size.add(new Option(`${size}x${size}`, String(size)));
@@ -424,13 +446,8 @@ ui.clearRegions.addEventListener("click", () =>
     puzzle.colors = {};
   }),
 );
-ui.exportBtn.addEventListener("click", () => downloadPuzzle(puzzle));
-ui.importBtn.addEventListener("click", () => ui.importFile.click());
-ui.importFile.addEventListener("change", () => {
-  const file = ui.importFile.files?.[0];
-  ui.importFile.value = "";
-  if (file) importPuzzle(file);
-});
+ui.share.addEventListener("click", copyLink);
+window.addEventListener("hashchange", openLink);
 ui.check.addEventListener("click", runCheck);
 
 document.addEventListener("keydown", (e) => {
@@ -447,3 +464,4 @@ document.addEventListener("keydown", (e) => {
 });
 
 render();
+openLink();
