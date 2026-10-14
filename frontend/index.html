@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Star Battle Editor</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>★</text></svg>" />
+  </head>
+  <body>
+    <header>
+      <h1>Star Battle Editor</h1>
+    </header>
+    <main>
+      <section class="toolbar">
+        <div class="group tabs" role="group" aria-label="Mode">
+          <button id="mode-edit" type="button">Edit</button>
+          <button id="mode-solve" type="button">Solve</button>
+        </div>
+        <label>Size <select id="size"></select></label>
+        <label>
+          Stars
+          <select id="stars">
+            <option value="1">1</option>
+            <option value="2">2</option>
+          </select>
+        </label>
+        <label class="toggle"><input id="auto-mark" type="checkbox" checked /> Auto-mark</label>
+        <div class="group">
+          <button id="undo" type="button" title="Ctrl+Z">Undo</button>
+          <button id="redo" type="button" title="Ctrl+Shift+Z">Redo</button>
+        </div>
+        <div class="group">
+          <button id="clear-marks" type="button">Clear marks</button>
+          <button id="clear-regions" type="button">Clear regions</button>
+        </div>
+        <div class="group">
+          <button id="export" type="button">Export</button>
+          <button id="import" type="button">Import</button>
+          <input id="import-file" type="file" accept="application/json,.json" hidden />
+        </div>
+        <button id="check" type="button" class="primary">Check constraints</button>
+      </section>
+      <p id="hint" class="hint"></p>
+      <div class="layout">
+        <div class="board-column">
+          <div id="board" class="grid board"></div>
+          <p id="status" class="status"></p>
+        </div>
+        <aside id="results" class="results" hidden></aside>
+      </div>
+    </main>
+    <dialog id="resize-dialog">
+      <form method="dialog">
+        <p id="resize-text"></p>
+        <label>
+          Rows
+          <select id="resize-v">
+            <option value="bottom">Bottom</option>
+            <option value="top">Top</option>
+            <option value="both">Both sides</option>
+          </select>
+        </label>
+        <label>
+          Columns
+          <select id="resize-h">
+            <option value="right">Right</option>
+            <option value="left">Left</option>
+            <option value="both">Both sides</option>
+          </select>
+        </label>
+        <menu>
+          <button value="cancel">Cancel</button>
+          <button value="apply" class="primary">Apply</button>
+        </menu>
+      </form>
+    </dialog>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

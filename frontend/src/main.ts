@@ -1,0 +1,375 @@
+import "./style.css";
+import { Board, drawGrid } from "./board";
+import { checkPuzzle } from "./check";
+import { History } from "./history";
+import { downloadPuzzle, loadState, parsePuzzle, saveState } from "./io";
+import {
+  autoMarks,
+  type HorizontalEdge,
+  isSolved,
+  nextRegionId,
+  regionGroups,
+  resizeGrid,
+  type VerticalEdge,
+  violations,
+} from "./rules";
+import type { CheckResult, CheckStatus } from "./solver";
+import {
+  blankPuzzle,
+  type Cell,
+  isBlank,
+  makeGrid,
+  type Mark,
+  MAX_SIZE,
+  MIN_SIZE,
+  type Mode,
+  type Puzzle,
+  type StarCount,
+} from "./types";
+
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+const ui = {
+  modeEdit: $<HTMLButtonElement>("mode-edit"),
+  modeSolve: $<HTMLButtonElement>("mode-solve"),
+  size: $<HTMLSelectElement>("size"),
+  stars: $<HTMLSelectElement>("stars"),
+  autoMark: $<HTMLInputElement>("auto-mark"),
+  undo: $<HTMLButtonElement>("undo"),
+  redo: $<HTMLButtonElement>("redo"),
+  clearMarks: $<HTMLButtonElement>("clear-marks"),
+  clearRegions: $<HTMLButtonElement>("clear-regions"),
+  exportBtn: $<HTMLButtonElement>("export"),
+  importBtn: $<HTMLButtonElement>("import"),
+  importFile: $<HTMLInputElement>("import-file"),
+  check: $<HTMLButtonElement>("check"),
+  hint: $("hint"),
+  status: $("status"),
+  results: $("results"),
+  resizeDialog: $<HTMLDialogElement>("resize-dialog"),
+  resizeText: $("resize-text"),
+  resizeV: $<HTMLSelectElement>("resize-v"),
+  resizeH: $<HTMLSelectElement>("resize-h"),
+};
+
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
+const MOD_KEY = IS_MAC ? "Cmd" : "Ctrl";
+
+const HINTS: Record<Mode, string> = {
+  edit:
+    "Left-drag draws a new region. Start the drag on a region to extend it. Right-drag erases regions. " +
+    `${MOD_KEY}+click removes a whole region.`,
+  solve: "Left-click places or removes a star. Right-click or right-drag places or removes X marks.",
+};
+
+const SUMMARY: Record<CheckStatus, { title: string; detail: string; tone: string }> = {
+  invalid: { title: "Regions need fixes", detail: "Fix these issues before the solver can run.", tone: "warn" },
+  none: { title: "Over-constrained", detail: "The puzzle has no solution.", tone: "bad" },
+  unique: { title: "Unique solution", detail: "The puzzle has exactly one solution.", tone: "good" },
+  multiple: {
+    title: "Under-constrained",
+    detail: "The puzzle has more than one solution. Two are shown. Highlighted cells are different.",
+    tone: "warn",
+  },
+  timeout: { title: "Solver timed out", detail: "The solver did not finish in time.", tone: "warn" },
+};
+
+type Stroke = { kind: "region"; region: number | null } | { kind: "x"; erase: boolean };
+
+const saved = loadState();
+let puzzle = saved.puzzle ?? blankPuzzle(10, 2);
+let mode: Mode = saved.mode ?? "edit";
+let autoMark = saved.autoMark ?? true;
+let check: CheckResult | null = null;
+let checkError = "";
+let checking = false;
+let pendingSize: number | null = null;
+let snapshot: Puzzle | null = null;
+let stroke: Stroke | null = null;
+const history = new History<Puzzle>();
+
+const key = ([r, c]: Cell) => `${r},${c}`;
+const structureKey = (p: Puzzle) => JSON.stringify([p.size, p.stars, p.regions]);
+
+function clearCheck() {
+  check = null;
+  checkError = "";
+}
+
+function begin() {
+  snapshot = structuredClone(puzzle);
+}
+
+function commit() {
+  if (snapshot && JSON.stringify(snapshot) !== JSON.stringify(puzzle)) {
+    history.record(snapshot);
+    if (structureKey(snapshot) !== structureKey(puzzle)) clearCheck();
+  }
+  snapshot = null;
+  render();
+}
+
+function change(apply: () => void) {
+  begin();
+  apply();
+  commit();
+}
+
+function restore(next: Puzzle | undefined) {
+  if (!next) return;
+  if (structureKey(next) !== structureKey(puzzle)) clearCheck();
+  puzzle = next;
+  render();
+}
+
+const undo = () => restore(history.undo(puzzle));
+const redo = () => restore(history.redo(puzzle));
+
+const board = new Board($("board"), {
+  start([r, c], { button, metaKey, ctrlKey }) {
+    begin();
+    const removeRegion = button === 0 && (IS_MAC ? metaKey : ctrlKey);
+    if (mode === "edit" && removeRegion) {
+      const target = puzzle.regions[r][c];
+      if (target !== null) puzzle.regions = puzzle.regions.map((row) => row.map((id) => (id === target ? null : id)));
+    } else if (mode === "edit") {
+      const region = button === 2 ? null : (puzzle.regions[r][c] ?? nextRegionId(puzzle.regions));
+      stroke = { kind: "region", region };
+      puzzle.regions[r][c] = region;
+    } else if (button === 0) {
+      puzzle.marks[r][c] = puzzle.marks[r][c] === "star" ? "" : "star";
+    } else {
+      const erase = puzzle.marks[r][c] === "x";
+      stroke = { kind: "x", erase };
+      puzzle.marks[r][c] = erase ? "" : "x";
+    }
+    render();
+  },
+  move([r, c]) {
+    if (stroke?.kind === "region") {
+      puzzle.regions[r][c] = stroke.region;
+    } else if (stroke?.kind === "x") {
+      const mark = puzzle.marks[r][c];
+      if (stroke.erase && mark === "x") puzzle.marks[r][c] = "";
+      if (!stroke.erase && mark === "") puzzle.marks[r][c] = "x";
+    } else {
+      return;
+    }
+    render();
+  },
+  end() {
+    stroke = null;
+    commit();
+  },
+});
+
+function glyph(el: HTMLElement, kind: "star" | "x" | "auto-x") {
+  el.classList.add(kind);
+  el.textContent = kind === "star" ? "★" : "✕";
+}
+
+function render() {
+  document.body.dataset.mode = mode;
+  ui.modeEdit.classList.toggle("active", mode === "edit");
+  ui.modeSolve.classList.toggle("active", mode === "solve");
+  ui.size.value = String(puzzle.size);
+  ui.stars.value = String(puzzle.stars);
+  ui.autoMark.checked = autoMark;
+  ui.undo.disabled = !history.canUndo;
+  ui.redo.disabled = !history.canRedo;
+  ui.check.disabled = checking;
+  ui.check.textContent = checking ? "Checking..." : "Check constraints";
+  ui.hint.textContent = HINTS[mode];
+
+  const auto = autoMark ? autoMarks(puzzle) : null;
+  const errors = violations(puzzle, auto);
+  const issues = new Set(check?.issues.flatMap((issue) => issue.cells.map(key)) ?? []);
+  drawGrid(board.el, puzzle.regions, (el, r, c) => {
+    if (issues.has(key([r, c]))) el.classList.add("issue");
+    const mark = puzzle.marks[r][c];
+    if (mark === "star") glyph(el, "star");
+    else if (mark === "x") glyph(el, "x");
+    else if (auto?.[r][c]) glyph(el, "auto-x");
+    if (errors[r][c]) el.classList.add("error");
+  });
+
+  renderStatus();
+  renderResults();
+  if (!snapshot) saveState({ puzzle, mode, autoMark });
+}
+
+function renderStatus() {
+  const { size, stars, regions, marks } = puzzle;
+  ui.status.classList.remove("solved");
+  if (mode === "edit") {
+    const unassigned = regions.flat().filter((region) => region === null).length;
+    const parts = [`${regionGroups(regions).size} of ${size} regions`];
+    if (unassigned) parts.push(`${unassigned} cells without a region`);
+    ui.status.textContent = parts.join(", ");
+  } else if (isSolved(puzzle)) {
+    ui.status.textContent = "Solved!";
+    ui.status.classList.add("solved");
+  } else {
+    const placed = marks.flat().filter((mark) => mark === "star").length;
+    ui.status.textContent = `${placed} of ${size * stars} stars placed`;
+  }
+}
+
+function miniGrid(solution: Cell[], diff: Set<string>): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "grid mini";
+  const stars = new Set(solution.map(key));
+  drawGrid(el, puzzle.regions, (cell, r, c) => {
+    if (stars.has(key([r, c]))) glyph(cell, "star");
+    if (diff.has(key([r, c]))) cell.classList.add("diff");
+  });
+  return el;
+}
+
+function renderResults() {
+  const el = ui.results;
+  el.hidden = !check && !checkError;
+  if (el.hidden) return;
+
+  const title = document.createElement("h2");
+  const detail = document.createElement("p");
+  const children: HTMLElement[] = [title, detail];
+  if (!check) {
+    el.className = "results bad";
+    title.textContent = "Check failed";
+    detail.textContent = checkError;
+    el.replaceChildren(...children);
+    return;
+  }
+
+  const summary = SUMMARY[check.status];
+  el.className = `results ${summary.tone}`;
+  title.textContent = summary.title;
+  detail.textContent = summary.detail;
+
+  if (check.issues.length) {
+    const list = document.createElement("ul");
+    for (const issue of check.issues) {
+      const item = document.createElement("li");
+      item.textContent = issue.message;
+      list.append(item);
+    }
+    children.push(list);
+  }
+
+  const [a, b] = check.solutions;
+  const diff = new Set<string>();
+  if (a && b) {
+    const sa = new Set(a.map(key));
+    const sb = new Set(b.map(key));
+    for (const k of sa) if (!sb.has(k)) diff.add(k);
+    for (const k of sb) if (!sa.has(k)) diff.add(k);
+  }
+  const solutions = document.createElement("div");
+  solutions.className = "solutions";
+  solutions.append(...check.solutions.map((solution) => miniGrid(solution, diff)));
+  children.push(solutions);
+  el.replaceChildren(...children);
+}
+
+async function runCheck() {
+  const target = structuredClone(puzzle);
+  checking = true;
+  clearCheck();
+  render();
+  try {
+    const result = await checkPuzzle(target);
+    if (structureKey(target) === structureKey(puzzle)) check = result;
+  } catch (e) {
+    checkError = e instanceof Error ? e.message : String(e);
+  }
+  checking = false;
+  render();
+}
+
+function requestResize(size: number) {
+  if (isBlank(puzzle)) {
+    change(() => (puzzle = blankPuzzle(size, puzzle.stars)));
+    return;
+  }
+  const delta = size - puzzle.size;
+  const count = Math.abs(delta);
+  const noun = count === 1 ? "row and 1 column" : `rows and ${count} columns`;
+  ui.resizeText.textContent =
+    `Change the grid from ${puzzle.size}x${puzzle.size} to ${size}x${size}. ` +
+    `Choose where to ${delta > 0 ? "add" : "remove"} ${count} ${noun}.`;
+  pendingSize = size;
+  ui.resizeDialog.returnValue = "";
+  ui.resizeDialog.showModal();
+}
+
+ui.resizeDialog.addEventListener("close", () => {
+  const size = pendingSize;
+  pendingSize = null;
+  if (ui.resizeDialog.returnValue !== "apply" || size === null) {
+    render();
+    return;
+  }
+  const v = ui.resizeV.value as VerticalEdge;
+  const h = ui.resizeH.value as HorizontalEdge;
+  change(() => {
+    puzzle = {
+      ...puzzle,
+      size,
+      regions: resizeGrid(puzzle.regions, size, null, v, h),
+      marks: resizeGrid<Mark>(puzzle.marks, size, "", v, h),
+    };
+  });
+});
+
+async function importPuzzle(file: File) {
+  try {
+    const next = parsePuzzle(JSON.parse(await file.text()));
+    change(() => (puzzle = next));
+  } catch (e) {
+    alert(`Could not import ${file.name}: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
+for (let size = MIN_SIZE; size <= MAX_SIZE; size++) ui.size.add(new Option(`${size}x${size}`, String(size)));
+
+ui.modeEdit.addEventListener("click", () => {
+  mode = "edit";
+  render();
+});
+ui.modeSolve.addEventListener("click", () => {
+  mode = "solve";
+  render();
+});
+ui.size.addEventListener("change", () => requestResize(Number(ui.size.value)));
+ui.stars.addEventListener("change", () => change(() => (puzzle.stars = Number(ui.stars.value) as StarCount)));
+ui.autoMark.addEventListener("change", () => {
+  autoMark = ui.autoMark.checked;
+  render();
+});
+ui.undo.addEventListener("click", undo);
+ui.redo.addEventListener("click", redo);
+ui.clearMarks.addEventListener("click", () => change(() => (puzzle.marks = makeGrid<Mark>(puzzle.size, ""))));
+ui.clearRegions.addEventListener("click", () => change(() => (puzzle.regions = makeGrid(puzzle.size, null))));
+ui.exportBtn.addEventListener("click", () => downloadPuzzle(puzzle));
+ui.importBtn.addEventListener("click", () => ui.importFile.click());
+ui.importFile.addEventListener("change", () => {
+  const file = ui.importFile.files?.[0];
+  ui.importFile.value = "";
+  if (file) importPuzzle(file);
+});
+ui.check.addEventListener("click", runCheck);
+
+document.addEventListener("keydown", (e) => {
+  if (!(e.metaKey || e.ctrlKey) || snapshot || ui.resizeDialog.open) return;
+  const k = e.key.toLowerCase();
+  if (k === "z" && !e.shiftKey) {
+    e.preventDefault();
+    undo();
+  } else if ((k === "z" && e.shiftKey) || k === "y") {
+    e.preventDefault();
+    redo();
+  }
+});
+
+render();
