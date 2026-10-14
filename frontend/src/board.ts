@@ -1,19 +1,11 @@
+import { isDark, type RegionColors, regionColor } from "./colors";
 import { cellPath } from "./rules";
 import type { Cell, Grid } from "./types";
-
-const PALETTE = [
-  "#f8b4b4", "#fcd9a8", "#fdf2a2", "#c6efb0", "#a8e6d9", "#a9d4f5", "#c3c6f7", "#e2bdf2",
-  "#f7c1dc", "#d9c7a7", "#b9e0a5", "#9fd8e8", "#f5b7a1", "#cfd8dc", "#e6ee9c", "#b2dfdb",
-  "#ffccbc", "#d1c4e9",
-];
-
-export function regionColor(region: number): string {
-  return PALETTE[region % PALETTE.length];
-}
 
 export function drawGrid(
   el: HTMLElement,
   regions: Grid<number | null>,
+  colors: RegionColors,
   decorate?: (cell: HTMLElement, r: number, c: number) => void,
 ): void {
   const size = regions.length;
@@ -23,7 +15,11 @@ export function drawGrid(
     row.forEach((region, c) => {
       const div = document.createElement("div");
       div.className = "cell";
-      if (region !== null) div.style.backgroundColor = regionColor(region);
+      if (region !== null) {
+        const color = regionColor(region, colors);
+        div.style.backgroundColor = color;
+        if (isDark(color)) div.classList.add("dark");
+      }
       if (r === 0 || regions[r - 1][c] !== region) div.classList.add("edge-top");
       if (c === 0 || regions[r][c - 1] !== region) div.classList.add("edge-left");
       if (r === size - 1) div.classList.add("edge-bottom");

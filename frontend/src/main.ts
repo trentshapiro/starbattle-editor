@@ -1,8 +1,9 @@
 import "./style.css";
 import { Board, drawGrid } from "./board";
 import { checkPuzzle } from "./check";
+import { PALETTE, regionColor, unusedColor } from "./colors";
 import { History } from "./history";
-import { downloadPuzzle, loadState, parsePuzzle, saveState } from "./io";
+import { downloadPuzzle, loadState, parsePuzzleFile, saveState } from "./io";
 import {
   autoMarks,
   type HorizontalEdge,
@@ -50,6 +51,7 @@ const ui = {
   resizeText: $("resize-text"),
   resizeV: $<HTMLSelectElement>("resize-v"),
   resizeH: $<HTMLSelectElement>("resize-h"),
+  picker: $("color-picker"),
 };
 
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
@@ -58,7 +60,7 @@ const MOD_KEY = IS_MAC ? "Cmd" : "Ctrl";
 const HINTS: Record<Mode, string> = {
   edit:
     "Left-drag draws a new region. Start the drag on a region to extend it. Right-drag erases regions. " +
-    `${MOD_KEY}+click removes a whole region.`,
+    `${MOD_KEY}+click changes a region's color. ${MOD_KEY}+right-click removes a whole region.`,
   solve: "Left-click places or removes a star. Right-click or right-drag places or removes X marks.",
 };
 
@@ -126,14 +128,21 @@ const undo = () => restore(history.undo(puzzle));
 const redo = () => restore(history.redo(puzzle));
 
 const board = new Board($("board"), {
-  start([r, c], { button, metaKey, ctrlKey }) {
+  start([r, c], { button, metaKey, ctrlKey, clientX, clientY }) {
     begin();
-    const removeRegion = button === 0 && (IS_MAC ? metaKey : ctrlKey);
-    if (mode === "edit" && removeRegion) {
-      const target = puzzle.regions[r][c];
-      if (target !== null) puzzle.regions = puzzle.regions.map((row) => row.map((id) => (id === target ? null : id)));
+    const target = puzzle.regions[r][c];
+    if (mode === "edit" && (IS_MAC ? metaKey : ctrlKey)) {
+      if (target !== null && button === 0) openPicker(target, clientX, clientY);
+      if (target !== null && button === 2) {
+        puzzle.regions = puzzle.regions.map((row) => row.map((id) => (id === target ? null : id)));
+      }
     } else if (mode === "edit") {
-      const region = button === 2 ? null : (puzzle.regions[r][c] ?? nextRegionId(puzzle.regions));
+      let region = target;
+      if (button === 2) region = null;
+      else if (region === null) {
+        region = nextRegionId(puzzle.regions);
+        puzzle.colors[region] = unusedColor(puzzle.regions, puzzle.colors);
+      }
       stroke = { kind: "region", region };
       puzzle.regions[r][c] = region;
     } else if (button === 0) {
@@ -184,7 +193,7 @@ function render() {
   const auto = autoMark ? autoMarks(puzzle) : null;
   const errors = violations(puzzle, auto);
   const issues = new Set(check?.issues.flatMap((issue) => issue.cells.map(key)) ?? []);
-  drawGrid(board.el, puzzle.regions, (el, r, c) => {
+  drawGrid(board.el, puzzle.regions, puzzle.colors, (el, r, c) => {
     if (issues.has(key([r, c]))) el.classList.add("issue");
     const mark = puzzle.marks[r][c];
     if (mark === "star") glyph(el, "star");
@@ -219,7 +228,7 @@ function miniGrid(solution: Cell[], diff: Set<string>): HTMLElement {
   const el = document.createElement("div");
   el.className = "grid mini";
   const stars = new Set(solution.map(key));
-  drawGrid(el, puzzle.regions, (cell, r, c) => {
+  drawGrid(el, puzzle.regions, puzzle.colors, (cell, r, c) => {
     if (stars.has(key([r, c]))) glyph(cell, "star");
     if (diff.has(key([r, c]))) cell.classList.add("diff");
   });
@@ -231,9 +240,19 @@ function renderResults() {
   el.hidden = !check && !checkError;
   if (el.hidden) return;
 
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "close";
+  close.title = "Dismiss";
+  close.setAttribute("aria-label", "Dismiss");
+  close.textContent = "✕";
+  close.addEventListener("click", () => {
+    clearCheck();
+    render();
+  });
   const title = document.createElement("h2");
   const detail = document.createElement("p");
-  const children: HTMLElement[] = [title, detail];
+  const children: HTMLElement[] = [close, title, detail];
   if (!check) {
     el.className = "results bad";
     title.textContent = "Check failed";
@@ -324,7 +343,8 @@ ui.resizeDialog.addEventListener("close", () => {
 
 async function importPuzzle(file: File) {
   try {
-    const next = parsePuzzle(JSON.parse(await file.text()));
+    const next = parsePuzzleFile(JSON.parse(await file.text()));
+    clearCheck();
     change(() => (puzzle = next));
   } catch (e) {
     alert(`Could not import ${file.name}: ${e instanceof Error ? e.message : e}`);
@@ -333,12 +353,60 @@ async function importPuzzle(file: File) {
 
 for (let size = MIN_SIZE; size <= MAX_SIZE; size++) ui.size.add(new Option(`${size}x${size}`, String(size)));
 
+let pickerRegion: number | null = null;
+
+const swatches = PALETTE.map((color) => {
+  const swatch = document.createElement("button");
+  swatch.type = "button";
+  swatch.className = "swatch";
+  swatch.style.backgroundColor = color;
+  swatch.title = color;
+  swatch.setAttribute("aria-label", color);
+  swatch.addEventListener("click", () => {
+    const region = pickerRegion;
+    closePicker();
+    if (region !== null) change(() => (puzzle.colors[region] = color));
+  });
+  return swatch;
+});
+ui.picker.replaceChildren(...swatches);
+
+function openPicker(region: number, x: number, y: number) {
+  pickerRegion = region;
+  const current = regionColor(region, puzzle.colors);
+  const others = new Set(
+    puzzle.regions.flat().flatMap((id) => (id === null || id === region ? [] : [regionColor(id, puzzle.colors)])),
+  );
+  swatches.forEach((swatch, i) => {
+    swatch.classList.toggle("current", PALETTE[i] === current);
+    swatch.classList.toggle("used", others.has(PALETTE[i]));
+  });
+  ui.picker.hidden = false;
+  const { width, height } = ui.picker.getBoundingClientRect();
+  ui.picker.style.left = `${Math.min(x + 8, window.innerWidth - width - 8)}px`;
+  ui.picker.style.top = `${Math.min(y + 8, window.innerHeight - height - 8)}px`;
+}
+
+function closePicker() {
+  pickerRegion = null;
+  ui.picker.hidden = true;
+}
+
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    if (!ui.picker.hidden && !ui.picker.contains(e.target as Node)) closePicker();
+  },
+  { capture: true },
+);
+
 ui.modeEdit.addEventListener("click", () => {
   mode = "edit";
   render();
 });
 ui.modeSolve.addEventListener("click", () => {
   mode = "solve";
+  closePicker();
   render();
 });
 ui.size.addEventListener("change", () => requestResize(Number(ui.size.value)));
@@ -350,7 +418,12 @@ ui.autoMark.addEventListener("change", () => {
 ui.undo.addEventListener("click", undo);
 ui.redo.addEventListener("click", redo);
 ui.clearMarks.addEventListener("click", () => change(() => (puzzle.marks = makeGrid<Mark>(puzzle.size, ""))));
-ui.clearRegions.addEventListener("click", () => change(() => (puzzle.regions = makeGrid(puzzle.size, null))));
+ui.clearRegions.addEventListener("click", () =>
+  change(() => {
+    puzzle.regions = makeGrid(puzzle.size, null);
+    puzzle.colors = {};
+  }),
+);
 ui.exportBtn.addEventListener("click", () => downloadPuzzle(puzzle));
 ui.importBtn.addEventListener("click", () => ui.importFile.click());
 ui.importFile.addEventListener("change", () => {
@@ -361,6 +434,7 @@ ui.importFile.addEventListener("change", () => {
 ui.check.addEventListener("click", runCheck);
 
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closePicker();
   if (!(e.metaKey || e.ctrlKey) || snapshot || ui.resizeDialog.open) return;
   const k = e.key.toLowerCase();
   if (k === "z" && !e.shiftKey) {

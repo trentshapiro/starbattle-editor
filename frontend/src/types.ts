@@ -11,6 +11,7 @@ export interface Puzzle {
   size: number;
   stars: StarCount;
   regions: Grid<number | null>;
+  colors: Record<number, string>;
   marks: Grid<Mark>;
 }
 
@@ -19,7 +20,7 @@ export function makeGrid<T>(size: number, fill: T): Grid<T> {
 }
 
 export function blankPuzzle(size: number, stars: StarCount): Puzzle {
-  return { size, stars, regions: makeGrid(size, null), marks: makeGrid<Mark>(size, "") };
+  return { size, stars, regions: makeGrid(size, null), colors: {}, marks: makeGrid<Mark>(size, "") };
 }
 
 export function isBlank(p: Puzzle): boolean {

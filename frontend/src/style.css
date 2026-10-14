@@ -164,16 +164,22 @@ body[data-mode="edit"] .board {
 }
 
 .cell.auto-x {
-  color: #a0a6ad;
+  color: rgb(0 0 0 / 0.4);
   font-size: calc(var(--cell) * 0.3);
 }
 
-.cell.error {
-  background-image: linear-gradient(rgb(220 38 38 / 0.35), rgb(220 38 38 / 0.35));
+.cell.dark.star,
+.cell.dark.x {
+  color: #fff;
 }
 
-.cell.error.star {
-  color: #b91c1c;
+.cell.dark.auto-x {
+  color: rgb(255 255 255 / 0.6);
+}
+
+/* Double ring stays visible on every region color. */
+.cell.error {
+  box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 4px #d50000;
 }
 
 .cell.issue {
@@ -198,11 +204,29 @@ body[data-mode="edit"] .board {
   border-radius: 8px;
   border-left: 6px solid #c4c8ce;
   background: #fff;
+  position: relative;
 }
 
 .results h2 {
   margin: 0 0 4px;
+  padding-right: 28px;
   font-size: 1.1rem;
+}
+
+.results .close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  color: #57606a;
+  font-size: 1rem;
+}
+
+.results .close:hover {
+  color: #1f2328;
+  background: #eef0f2;
 }
 
 .results p {
@@ -233,7 +257,53 @@ body[data-mode="edit"] .board {
 }
 
 .cell.diff {
-  box-shadow: inset 0 0 0 2px #d97706;
+  box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 3px #1f2328;
+}
+
+.picker {
+  position: fixed;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: repeat(5, 28px);
+  gap: 6px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.25);
+}
+
+.picker[hidden] {
+  display: none;
+}
+
+.swatch {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgb(0 0 0 / 0.2);
+  border-radius: 4px;
+}
+
+.swatch:hover {
+  transform: scale(1.1);
+}
+
+.swatch.current {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 4px #1f2328;
+}
+
+/* Dot marks colors that other regions already use. */
+.swatch.used::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px #1f2328;
 }
 
 dialog {
