@@ -1,13 +1,16 @@
 import type { Mode } from "./types";
 
-const BUTTONS: Record<string, { label: string; path: string }> = {
+const BUTTONS = {
   lmb: { label: "Left click", path: "M7 1A6 6 0 0 0 1 7v1h6z" },
   rmb: { label: "Right click", path: "M7 1a6 6 0 0 1 6 6v1H7z" },
 };
 
+type Button = keyof typeof BUTTONS;
+type Token = Button | "mod" | "shift" | "Z";
+
 const SVG = "http://www.w3.org/2000/svg";
 
-function mouse(button: string): Element {
+function mouse(button: Button): Element {
   const { label, path } = BUTTONS[button];
   const svg = document.createElementNS(SVG, "svg");
   svg.setAttribute("viewBox", "0 0 14 20");
@@ -34,7 +37,7 @@ function key(text: string, label: string): HTMLElement {
   return kbd;
 }
 
-const HELP: Record<Mode, [string[], string][]> = {
+const HELP: Record<Mode, [Token[], string][]> = {
   edit: [
     [["lmb"], "Drag to draw a new region. Start on a region to extend it."],
     [["rmb"], "Drag to erase regions."],
@@ -48,14 +51,14 @@ const HELP: Record<Mode, [string[], string][]> = {
   ],
 };
 
-const SHORTCUTS: [string[], string][] = [
+const SHORTCUTS: [Token[], string][] = [
   [["mod", "Z"], "Undo"],
   [["shift", "mod", "Z"], "Redo"],
 ];
 
 export function helpItems(mode: Mode, isMac: boolean): HTMLElement[] {
-  const token = (t: string): Element => {
-    if (t in BUTTONS) return mouse(t);
+  const token = (t: Token): Element => {
+    if (t === "lmb" || t === "rmb") return mouse(t);
     if (t === "mod") return isMac ? key("⌘", "Command") : key("Ctrl", "Control");
     if (t === "shift") return key("⇧", "Shift");
     return key(t, t);

@@ -1,7 +1,7 @@
 import { regionColor } from "./colors";
 import { makeGrid, type Mark, MAX_SIZE, MIN_SIZE, type Mode, type Puzzle, type StarCount } from "./types";
 
-const FILE_VERSION = 1;
+const STORAGE_VERSION = 1;
 const STORAGE_KEY = "starbattle-editor";
 
 export interface SavedState {
@@ -12,7 +12,7 @@ export interface SavedState {
 
 export function saveState({ puzzle, mode, autoMark }: SavedState): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: FILE_VERSION, ...puzzle, mode, autoMark }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, ...puzzle, mode, autoMark }));
   } catch {
     // Storage can be full or disabled. The editor still works without it.
   }
@@ -43,10 +43,11 @@ export function puzzleHash({ size, stars, regions, colors }: Puzzle): string {
 export function parsePuzzleHash(hash: string): Puzzle {
   const [version, size, stars, cells = "", hex = "", ...rest] = hash.replace(/^#/, "").split(".");
   const n = Number(size);
-  if (version !== LINK_VERSION || rest.length || cells.length !== n * n || hex.length % 6) {
+  const ids = [...cells].map((ch) => (ch === NO_REGION ? null : REGION_CHARS.indexOf(ch)));
+  const regionCount = new Set(ids.filter((id) => id !== null)).size;
+  if (version !== LINK_VERSION || rest.length || ids.length !== n * n || (hex && hex.length !== regionCount * 6)) {
     throw new Error("The link does not contain a puzzle.");
   }
-  const ids = [...cells].map((ch) => (ch === NO_REGION ? null : REGION_CHARS.indexOf(ch)));
   const regions = Array.from({ length: n }, (_, r) => ids.slice(r * n, (r + 1) * n));
   const colors = Object.fromEntries((hex.match(/.{6}/g) ?? []).map((color, id) => [id, `#${color}`]));
   const layout = parseLayout({ size: n, stars: Number(stars), regions, colors });
@@ -77,7 +78,7 @@ function parseColors(colors: unknown): Puzzle["colors"] {
 }
 
 function parseLayout(data: unknown): Omit<Puzzle, "marks" | "locked"> {
-  if (typeof data !== "object" || data === null) throw new Error("The file does not contain a puzzle.");
+  if (typeof data !== "object" || data === null) throw new Error("The data does not contain a puzzle.");
   const { size, stars, regions, colors } = data as Record<string, unknown>;
   if (typeof size !== "number" || !Number.isInteger(size) || size < MIN_SIZE || size > MAX_SIZE) {
     throw new Error(`Size must be a whole number from ${MIN_SIZE} to ${MAX_SIZE}.`);

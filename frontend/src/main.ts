@@ -369,7 +369,8 @@ function finishSearch(outcome: ReshapeResult | null) {
     return;
   }
   // Layouts that are still balancing stars may have no solution, so they are not kept.
-  const regions = outcome ? outcome.regions : progress?.ambiguous !== null ? progress?.regions : undefined;
+  const balanced = progress && progress.ambiguous !== null ? progress.regions : undefined;
+  const regions = outcome ? outcome.regions : balanced;
   if (regions) change(() => (puzzle.regions = regions));
   if (outcome) {
     check = outcome.result;

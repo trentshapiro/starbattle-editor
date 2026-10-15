@@ -19,8 +19,13 @@ describe("puzzle links", () => {
     expect(puzzleHash(parsed)).toBe(hash);
   });
 
-  test.each(["", "#2.8.2..", "#1.8.2.abc.", "#1.20.1." + "-".repeat(400) + ".", "#1.8.3." + "-".repeat(64) + "."])(
-    "rejects %s",
-    (hash) => expect(() => parsePuzzleHash(hash)).toThrow(),
-  );
+  test.each([
+    "",
+    "#2.8.2..",
+    "#1.8.2.abc.",
+    "#1.20.1." + "-".repeat(400) + ".",
+    "#1.8.3." + "-".repeat(64) + ".",
+    "#1.8.1." + "<".repeat(64) + ".",
+    "#1.8.1." + "0".repeat(64) + ".ffffffffffff",
+  ])("rejects %s", (hash) => expect(() => parsePuzzleHash(hash)).toThrow());
 });
