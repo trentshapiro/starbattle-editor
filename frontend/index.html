@@ -26,22 +26,22 @@
         </label>
         <label class="toggle"><input id="auto-mark" type="checkbox" checked /> Auto-mark</label>
         <div class="group">
-          <button id="undo" type="button" title="Ctrl+Z">Undo</button>
-          <button id="redo" type="button" title="Ctrl+Shift+Z">Redo</button>
-        </div>
-        <div class="group">
-          <button id="clear-marks" type="button">Clear marks</button>
-          <button id="clear-regions" type="button">Clear regions</button>
+          <button id="undo" type="button">Undo</button>
+          <button id="redo" type="button">Redo</button>
         </div>
         <button id="share" type="button">Copy link</button>
         <button id="check" type="button" class="primary">Check constraints</button>
         <button id="reshape" type="button" title="Reshape unlocked regions until the puzzle has one solution">Find unique</button>
       </section>
-      <p id="hint" class="hint"></p>
       <div class="layout">
+        <ul id="help" class="help" aria-label="Controls"></ul>
         <div class="board-column">
           <div id="board" class="grid board"></div>
           <p id="status" class="status"></p>
+          <div id="board-actions" class="group board-actions">
+            <button id="clear-marks" type="button">Clear marks</button>
+            <button id="clear-regions" type="button">Clear regions</button>
+          </div>
         </div>
         <aside id="results" class="results" hidden></aside>
       </div>

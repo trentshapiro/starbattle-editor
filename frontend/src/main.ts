@@ -2,6 +2,7 @@ import "./style.css";
 import { Board, drawGrid } from "./board";
 import { checkPuzzle } from "./check";
 import { PALETTE, regionColor, unusedColor } from "./colors";
+import { helpItems } from "./help";
 import { History } from "./history";
 import { loadState, parsePuzzleHash, puzzleHash, saveState } from "./io";
 import type { ReshapeInput, ReshapeMessage, ReshapeProgress, ReshapeResult } from "./reshape";
@@ -45,7 +46,8 @@ const ui = {
   check: $<HTMLButtonElement>("check"),
   reshape: $<HTMLButtonElement>("reshape"),
   toolbar: $("toolbar"),
-  hint: $("hint"),
+  boardActions: $("board-actions"),
+  help: $("help"),
   status: $("status"),
   results: $("results"),
   resizeDialog: $<HTMLDialogElement>("resize-dialog"),
@@ -56,15 +58,8 @@ const ui = {
 };
 
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgent);
-const MOD_KEY = IS_MAC ? "Cmd" : "Ctrl";
-
-const HINTS: Record<Mode, string> = {
-  edit:
-    "Left-drag draws a new region. Start the drag on a region to extend it. Right-drag erases regions. " +
-    `${MOD_KEY}+click changes a region's color. ${MOD_KEY}+right-click removes a whole region. ` +
-    "Shift+click locks a region so Find unique does not change it.",
-  solve: "Left-click places or removes a star. Right-click or right-drag places or removes X marks.",
-};
+const MOD_KEY = IS_MAC ? "⌘" : "Ctrl+";
+const HELP = { edit: helpItems("edit", IS_MAC), solve: helpItems("solve", IS_MAC) };
 
 const SUMMARY: Record<CheckStatus, { title: string; detail: string; tone: string }> = {
   invalid: { title: "Regions need fixes", detail: "Fix these issues before the solver can run.", tone: "warn" },
@@ -199,10 +194,11 @@ function render() {
   ui.stars.value = String(puzzle.stars);
   ui.autoMark.checked = autoMark;
   const busy = search !== null;
-  for (const control of ui.toolbar.querySelectorAll<HTMLButtonElement | HTMLSelectElement | HTMLInputElement>(
-    "button, select, input",
-  )) {
-    control.disabled = busy;
+  for (const container of [ui.toolbar, ui.boardActions]) {
+    const controls = container.querySelectorAll<HTMLButtonElement | HTMLSelectElement | HTMLInputElement>(
+      "button, select, input",
+    );
+    controls.forEach((control) => (control.disabled = busy));
   }
   ui.undo.disabled = busy || !history.canUndo;
   ui.redo.disabled = busy || !history.canRedo;
@@ -211,7 +207,10 @@ function render() {
   ui.reshape.disabled = checking;
   ui.reshape.hidden = mode !== "edit";
   ui.reshape.textContent = busy ? "Stop" : "Find unique";
-  ui.hint.textContent = HINTS[mode];
+  if (ui.help.dataset.mode !== mode) {
+    ui.help.dataset.mode = mode;
+    ui.help.replaceChildren(...HELP[mode]);
+  }
 
   // While searching, the board previews the best layout so far without changing the puzzle.
   const shown = search?.progress ? { ...puzzle, regions: search.progress.regions } : puzzle;
@@ -448,6 +447,9 @@ async function copyLink() {
   clearTimeout(shareTimer);
   shareTimer = setTimeout(() => (ui.share.textContent = "Copy link"), 1500);
 }
+
+ui.undo.title = `${MOD_KEY}Z`;
+ui.redo.title = `⇧${MOD_KEY}Z`;
 
 for (let size = MIN_SIZE; size <= MAX_SIZE; size++) ui.size.add(new Option(`${size}x${size}`, String(size)));
 
