@@ -13,6 +13,8 @@ export interface Puzzle {
   regions: Grid<number | null>;
   colors: Record<number, string>;
   marks: Grid<Mark>;
+  /** Regions that "Find unique" must not reshape. */
+  locked: number[];
 }
 
 export function makeGrid<T>(size: number, fill: T): Grid<T> {
@@ -20,7 +22,7 @@ export function makeGrid<T>(size: number, fill: T): Grid<T> {
 }
 
 export function blankPuzzle(size: number, stars: StarCount): Puzzle {
-  return { size, stars, regions: makeGrid(size, null), colors: {}, marks: makeGrid<Mark>(size, "") };
+  return { size, stars, regions: makeGrid(size, null), colors: {}, marks: makeGrid<Mark>(size, ""), locked: [] };
 }
 
 export function isBlank(p: Puzzle): boolean {

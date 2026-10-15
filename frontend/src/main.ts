@@ -4,6 +4,7 @@ import { checkPuzzle } from "./check";
 import { PALETTE, regionColor, unusedColor } from "./colors";
 import { History } from "./history";
 import { loadState, parsePuzzleHash, puzzleHash, saveState } from "./io";
+import type { ReshapeInput, ReshapeMessage, ReshapeProgress, ReshapeResult } from "./reshape";
 import {
   autoMarks,
   type HorizontalEdge,
@@ -42,6 +43,8 @@ const ui = {
   clearRegions: $<HTMLButtonElement>("clear-regions"),
   share: $<HTMLButtonElement>("share"),
   check: $<HTMLButtonElement>("check"),
+  reshape: $<HTMLButtonElement>("reshape"),
+  toolbar: $("toolbar"),
   hint: $("hint"),
   status: $("status"),
   results: $("results"),
@@ -58,7 +61,8 @@ const MOD_KEY = IS_MAC ? "Cmd" : "Ctrl";
 const HINTS: Record<Mode, string> = {
   edit:
     "Left-drag draws a new region. Start the drag on a region to extend it. Right-drag erases regions. " +
-    `${MOD_KEY}+click changes a region's color. ${MOD_KEY}+right-click removes a whole region.`,
+    `${MOD_KEY}+click changes a region's color. ${MOD_KEY}+right-click removes a whole region. ` +
+    "Shift+click locks a region so Find unique does not change it.",
   solve: "Left-click places or removes a star. Right-click or right-drag places or removes X marks.",
 };
 
@@ -74,6 +78,8 @@ const SUMMARY: Record<CheckStatus, { title: string; detail: string; tone: string
   timeout: { title: "Solver timed out", detail: "The solver did not finish in time.", tone: "warn" },
 };
 
+const SEARCH_LIMIT_MS = 60_000;
+
 type Stroke = { kind: "region"; region: number | null } | { kind: "x"; erase: boolean };
 
 const saved = loadState();
@@ -81,8 +87,9 @@ let puzzle = saved.puzzle ?? blankPuzzle(10, 2);
 let mode: Mode = saved.mode ?? "edit";
 let autoMark = saved.autoMark ?? true;
 let check: CheckResult | null = null;
-let checkError = "";
+let failure: { title: string; detail: string } | null = null;
 let checking = false;
+let search: { worker: Worker; timer: ReturnType<typeof setTimeout>; progress: ReshapeProgress | null } | null = null;
 let pendingSize: number | null = null;
 let snapshot: Puzzle | null = null;
 let stroke: Stroke | null = null;
@@ -93,7 +100,7 @@ const structureKey = (p: Puzzle) => JSON.stringify([p.size, p.stars, p.regions])
 
 function clearCheck() {
   check = null;
-  checkError = "";
+  failure = null;
 }
 
 function begin() {
@@ -126,13 +133,20 @@ const undo = () => restore(history.undo(puzzle));
 const redo = () => restore(history.redo(puzzle));
 
 const board = new Board($("board"), {
-  start([r, c], { button, metaKey, ctrlKey, clientX, clientY }) {
+  start([r, c], { button, metaKey, ctrlKey, shiftKey, clientX, clientY }) {
+    if (search) return;
     begin();
     const target = puzzle.regions[r][c];
-    if (mode === "edit" && (IS_MAC ? metaKey : ctrlKey)) {
+    if (mode === "edit" && shiftKey) {
+      if (target !== null && button === 0) {
+        const locked = puzzle.locked.includes(target);
+        puzzle.locked = locked ? puzzle.locked.filter((id) => id !== target) : [...puzzle.locked, target];
+      }
+    } else if (mode === "edit" && (IS_MAC ? metaKey : ctrlKey)) {
       if (target !== null && button === 0) openPicker(target, clientX, clientY);
       if (target !== null && button === 2) {
         puzzle.regions = puzzle.regions.map((row) => row.map((id) => (id === target ? null : id)));
+        puzzle.locked = puzzle.locked.filter((id) => id !== target);
       }
     } else if (mode === "edit") {
       let region = target;
@@ -140,6 +154,7 @@ const board = new Board($("board"), {
       else if (region === null) {
         region = nextRegionId(puzzle.regions);
         puzzle.colors[region] = unusedColor(puzzle.regions, puzzle.colors);
+        puzzle.locked = puzzle.locked.filter((id) => id !== region);
       }
       stroke = { kind: "region", region };
       puzzle.regions[r][c] = region;
@@ -165,6 +180,7 @@ const board = new Board($("board"), {
     render();
   },
   end() {
+    if (search) return;
     stroke = null;
     commit();
   },
@@ -182,17 +198,30 @@ function render() {
   ui.size.value = String(puzzle.size);
   ui.stars.value = String(puzzle.stars);
   ui.autoMark.checked = autoMark;
-  ui.undo.disabled = !history.canUndo;
-  ui.redo.disabled = !history.canRedo;
-  ui.check.disabled = checking;
+  const busy = search !== null;
+  for (const control of ui.toolbar.querySelectorAll<HTMLButtonElement | HTMLSelectElement | HTMLInputElement>(
+    "button, select, input",
+  )) {
+    control.disabled = busy;
+  }
+  ui.undo.disabled = busy || !history.canUndo;
+  ui.redo.disabled = busy || !history.canRedo;
+  ui.check.disabled = busy || checking;
   ui.check.textContent = checking ? "Checking..." : "Check constraints";
+  ui.reshape.disabled = checking;
+  ui.reshape.hidden = mode !== "edit";
+  ui.reshape.textContent = busy ? "Stop" : "Find unique";
   ui.hint.textContent = HINTS[mode];
 
-  const auto = autoMark ? autoMarks(puzzle) : null;
-  const errors = violations(puzzle, auto);
+  // While searching, the board previews the best layout so far without changing the puzzle.
+  const shown = search?.progress ? { ...puzzle, regions: search.progress.regions } : puzzle;
+  const auto = autoMark ? autoMarks(shown) : null;
+  const errors = violations(shown, auto);
   const issues = new Set(check?.issues.flatMap((issue) => issue.cells.map(key)) ?? []);
-  drawGrid(board.el, puzzle.regions, puzzle.colors, (el, r, c) => {
+  const locked = new Set(shown.locked);
+  drawGrid(board.el, shown.regions, shown.colors, (el, r, c) => {
     if (issues.has(key([r, c]))) el.classList.add("issue");
+    if (locked.has(shown.regions[r][c]!)) el.classList.add("locked");
     const mark = puzzle.marks[r][c];
     if (mark === "star") glyph(el, "star");
     else if (mark === "x") glyph(el, "x");
@@ -208,7 +237,13 @@ function render() {
 function renderStatus() {
   const { size, stars, regions, marks } = puzzle;
   ui.status.classList.remove("solved");
-  if (mode === "edit") {
+  if (search) {
+    const progress = search.progress;
+    const parts = [progress ? `Searching, step ${progress.iterations}` : "Searching"];
+    if (progress?.ambiguous === null) parts.push("Giving each region its share of stars");
+    else if (progress) parts.push(`${progress.ambiguous} cells can still hold a star in another solution`);
+    ui.status.textContent = parts.join(". ");
+  } else if (mode === "edit") {
     const unassigned = regions.flat().filter((region) => region === null).length;
     const parts = [`${regionGroups(regions).size} of ${size} regions`];
     if (unassigned) parts.push(`${unassigned} cells without a region`);
@@ -235,7 +270,7 @@ function miniGrid(solution: Cell[], diff: Set<string>): HTMLElement {
 
 function renderResults() {
   const el = ui.results;
-  el.hidden = !check && !checkError;
+  el.hidden = !check && !failure;
   if (el.hidden) return;
 
   const close = document.createElement("button");
@@ -253,8 +288,8 @@ function renderResults() {
   const children: HTMLElement[] = [close, title, detail];
   if (!check) {
     el.className = "results bad";
-    title.textContent = "Check failed";
-    detail.textContent = checkError;
+    title.textContent = failure?.title ?? "";
+    detail.textContent = failure?.detail ?? "";
     el.replaceChildren(...children);
     return;
   }
@@ -298,10 +333,51 @@ async function runCheck() {
     const result = await checkPuzzle(target);
     if (structureKey(target) === structureKey(puzzle)) check = result;
   } catch (e) {
-    checkError = e instanceof Error ? e.message : String(e);
+    failure = { title: "Check failed", detail: e instanceof Error ? e.message : String(e) };
   }
   checking = false;
   render();
+}
+
+function startSearch() {
+  const { size, stars, regions, locked } = puzzle;
+  const worker = new Worker(new URL("./reshape.worker.ts", import.meta.url), { type: "module" });
+  search = { worker, timer: setTimeout(() => finishSearch(null), SEARCH_LIMIT_MS), progress: null };
+  closePicker();
+  clearCheck();
+  worker.onmessage = (e: MessageEvent<ReshapeMessage>) => {
+    if (e.data.type !== "progress") finishSearch(e.data);
+    else if (search) {
+      search.progress = e.data;
+      render();
+    }
+  };
+  worker.onerror = (e) => finishSearch({ type: "error", message: e.message || "The search failed." });
+  worker.postMessage({ size, stars, regions, locked } satisfies ReshapeInput);
+  render();
+}
+
+/** A null outcome means the user stopped the search or it ran out of time. */
+function finishSearch(outcome: ReshapeResult | null) {
+  if (!search) return;
+  const { worker, timer, progress } = search;
+  worker.terminate();
+  clearTimeout(timer);
+  search = null;
+  if (outcome?.type === "error") {
+    failure = { title: "Find unique failed", detail: outcome.message };
+    render();
+    return;
+  }
+  // Layouts that are still balancing stars may have no solution, so they are not kept.
+  const regions = outcome ? outcome.regions : progress?.ambiguous !== null ? progress?.regions : undefined;
+  if (regions) change(() => (puzzle.regions = regions));
+  if (outcome) {
+    check = outcome.result;
+    render();
+  } else if (regions) {
+    runCheck();
+  }
 }
 
 function requestResize(size: number) {
@@ -444,15 +520,17 @@ ui.clearRegions.addEventListener("click", () =>
   change(() => {
     puzzle.regions = makeGrid(puzzle.size, null);
     puzzle.colors = {};
+    puzzle.locked = [];
   }),
 );
 ui.share.addEventListener("click", copyLink);
 window.addEventListener("hashchange", openLink);
 ui.check.addEventListener("click", runCheck);
+ui.reshape.addEventListener("click", () => (search ? finishSearch(null) : startSearch()));
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closePicker();
-  if (!(e.metaKey || e.ctrlKey) || snapshot || ui.resizeDialog.open) return;
+  if (!(e.metaKey || e.ctrlKey) || snapshot || search || ui.resizeDialog.open) return;
   const k = e.key.toLowerCase();
   if (k === "z" && !e.shiftKey) {
     e.preventDefault();

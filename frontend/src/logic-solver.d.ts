@@ -12,10 +12,12 @@ declare module "logic-solver" {
     require(...formulas: Operand[]): void;
     forbid(...formulas: Operand[]): void;
     solve(): Solution | null;
+    solveAssuming(formula: Operand): Solution | null;
   }
 
   const Logic: {
     Solver: typeof Solver;
+    or(...operands: Operand[]): Formula;
     exactlyOne(...operands: Operand[]): Formula;
     atMostOne(...operands: Operand[]): Formula;
     sum(...operands: Operand[]): Bits;

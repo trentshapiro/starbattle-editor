@@ -186,6 +186,11 @@ body[data-mode="edit"] .board {
   background-image: repeating-linear-gradient(45deg, rgb(0 0 0 / 0.18) 0 3px, transparent 3px 8px);
 }
 
+.cell.locked {
+  background-image: radial-gradient(rgb(0 0 0 / 0.3) 1.5px, transparent 2px);
+  background-size: 8px 8px;
+}
+
 .status {
   margin: 12px 0 0;
   color: #57606a;

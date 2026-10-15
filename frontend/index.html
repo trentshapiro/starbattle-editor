@@ -11,7 +11,7 @@
       <h1>Star Battle Editor</h1>
     </header>
     <main>
-      <section class="toolbar">
+      <section id="toolbar" class="toolbar">
         <div class="group tabs" role="group" aria-label="Mode">
           <button id="mode-edit" type="button">Edit</button>
           <button id="mode-solve" type="button">Solve</button>
@@ -35,6 +35,7 @@
         </div>
         <button id="share" type="button">Copy link</button>
         <button id="check" type="button" class="primary">Check constraints</button>
+        <button id="reshape" type="button" title="Reshape unlocked regions until the puzzle has one solution">Find unique</button>
       </section>
       <p id="hint" class="hint"></p>
       <div class="layout">

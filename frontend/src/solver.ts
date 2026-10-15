@@ -36,7 +36,9 @@ export function validate({ size, regions }: SolverInput): Issue[] {
 
 const cellVar = ([r, c]: Cell) => `${r},${c}`;
 
-export function findSolutions({ size: n, stars: k, regions }: SolverInput, limit = 2): Cell[][] {
+const toCell = (v: string): Cell => v.split(",").map(Number) as Cell;
+
+function buildSolver({ size: n, stars: k, regions }: SolverInput): InstanceType<typeof Logic.Solver> {
   const solver = new Logic.Solver();
   const units: Cell[][] = [...regionGroups(regions).values()];
   for (let i = 0; i < n; i++) {
@@ -54,15 +56,46 @@ export function findSolutions({ size: n, stars: k, regions }: SolverInput, limit
       solver.require(Logic.atMostOne(block.map(cellVar)));
     }
   }
+  return solver;
+}
 
+export function findSolutions(input: SolverInput, limit = 2): Cell[][] {
+  const solver = buildSolver(input);
   const solutions: Cell[][] = [];
   while (solutions.length < limit) {
     const solution = solver.solve();
     if (!solution) break;
-    solutions.push(solution.getTrueVars().map((v): Cell => v.split(",").map(Number) as Cell));
+    solutions.push(solution.getTrueVars().map(toCell));
     solver.forbid(solution.getFormula());
   }
   return solutions;
+}
+
+/** A solution with a star in `cell`, or any solution when none has one there. */
+export function solutionWith(input: SolverInput, cell: Cell): Cell[] | undefined {
+  const solver = buildSolver(input);
+  return (solver.solveAssuming(cellVar(cell)) ?? solver.solve())?.getTrueVars().map(toCell);
+}
+
+/** Cells outside `target` that hold a star in some solution. None means `target` is the only solution. */
+export function ambiguousCells(input: SolverInput, target: Cell[]): Cell[] {
+  const solver = buildSolver(input);
+  const taken = new Set(target.map(cellVar));
+  let open: string[] = [];
+  for (let r = 0; r < input.size; r++) {
+    for (let c = 0; c < input.size; c++) if (!taken.has(cellVar([r, c]))) open.push(cellVar([r, c]));
+  }
+  const found: string[] = [];
+  while (open.length) {
+    // Each new requirement is stronger than the last, so it can stay on the solver.
+    solver.require(Logic.or(open));
+    const solution = solver.solve();
+    if (!solution) break;
+    const stars = new Set(solution.getTrueVars());
+    found.push(...open.filter((v) => stars.has(v)));
+    open = open.filter((v) => !stars.has(v));
+  }
+  return found.map(toCell);
 }
 
 export function checkPuzzle(input: SolverInput): CheckResult {
