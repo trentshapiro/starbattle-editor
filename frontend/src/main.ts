@@ -297,6 +297,14 @@ function renderResults() {
   el.className = `results ${summary.tone}`;
   title.textContent = summary.title;
   detail.textContent = summary.detail;
+  if (check.rating !== undefined) {
+    const rating = document.createElement("p");
+    rating.textContent =
+      check.rating === null
+        ? "Needs guessing. Logic alone cannot finish it."
+        : `Difficulty score ${check.rating}. Logic alone solves it.`;
+    children.push(rating);
+  }
 
   if (check.issues.length) {
     const list = document.createElement("ul");

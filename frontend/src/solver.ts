@@ -13,6 +13,8 @@ export interface CheckResult {
   status: CheckStatus;
   issues: Issue[];
   solutions: Cell[][];
+  /** Logic score of a unique puzzle, or null when it needs guessing. */
+  rating?: number | null;
 }
 
 export interface SolverInput {
