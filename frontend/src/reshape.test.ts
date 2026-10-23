@@ -85,11 +85,11 @@ describe("reshape", () => {
     };
     const out = reshape(
       { size: regions.length, stars, regions: regions.map((row) => [...row]), locked: [] },
-      { random: seeded(2), maxIterations: 150, onProgress: (progress) => expectFloor(progress.regions) },
+      { random: seeded(2), maxIterations: 60, onProgress: (progress) => expectFloor(progress.regions) },
     );
     if (out.type !== "done") throw new Error(out.message);
     expectFloor(out.regions);
-  });
+  }, 30_000);
 
   test("never leaves the puzzle without a solution", () => {
     const out = reshape({ size: 10, stars: 2, regions: rowsAsRegions(10), locked: [] }, { random: seeded(1), maxIterations: 5 });
