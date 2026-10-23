@@ -1,6 +1,6 @@
 import { regionGroups } from "./rules";
 import { ambiguousCells, type CheckResult, findSolutions, solutionWith, type SolverInput, validate } from "./solver";
-import type { Cell, Grid } from "./types";
+import type { Cell, Grid, StarCount } from "./types";
 
 export interface ReshapeInput extends SolverInput {
   locked: number[];
@@ -32,6 +32,10 @@ const NEAR = 2;
 const BALANCE_STEPS = 5000;
 const SWAP_RATE = 0.2;
 const JUMP_AFTER = 3;
+
+// Tiny regions give the solver an easy foothold, so each floor sits 3 cells above the smallest
+// region that can hold the stars: 1 cell for 1 star, 3 in a line for 2.
+export const MIN_REGION: Record<StarCount, number> = { 1: 4, 2: 6 };
 
 const key = ([r, c]: Cell) => `${r},${c}`;
 
@@ -80,6 +84,7 @@ function targetChoices(input: SolverInput, locked: Set<number>): Cell[][] {
 export function reshape(input: ReshapeInput, options: ReshapeOptions = {}): ReshapeResult {
   const { random = Math.random, maxIterations = Infinity, onProgress } = options;
   const { size, stars } = input;
+  const floor = MIN_REGION[stars as StarCount];
   const issues = validate(input);
   if (issues.length) return { type: "error", message: issues.map((issue) => issue.message).join(". ") };
 
@@ -143,10 +148,10 @@ export function reshape(input: ReshapeInput, options: ReshapeOptions = {}): Resh
       });
     });
 
-  /** Move one cell, keeping the region it leaves in one piece. */
+  /** Move one cell, keeping the region it leaves in one piece and above the floor. */
   const move = (regions: Grid<number | null>, [[r, c], to]: [Cell, number]) => {
     const cells = regionGroups(regions).get(regions[r][c]!)!;
-    if (cells.length === 1 || components(regions, cells, [r, c]) > components(regions, cells, null)) return null;
+    if (cells.length <= floor || components(regions, cells, [r, c]) > components(regions, cells, null)) return null;
     const next = regions.map((row) => [...row]);
     next[r][c] = to;
     return next;

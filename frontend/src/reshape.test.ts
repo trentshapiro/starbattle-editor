@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { reshape } from "./reshape";
+import { MIN_REGION, reshape } from "./reshape";
 import { regionGroups } from "./rules";
 import { checkPuzzle } from "./solver";
 import type { Grid } from "./types";
@@ -69,6 +69,26 @@ describe("reshape", () => {
     const lockedCells = (regions: Grid<number | null>) => regions.map((row) => row.map((id) => id === 4 || id === 7));
     expect(lockedCells(out.regions)).toEqual(lockedCells(DRAFT_8));
     for (const cells of regionGroups(out.regions).values()) expect(isConnected(out.regions, cells)).toBe(true);
+  });
+
+  test.each([
+    [1, rowsAsRegions(8)],
+    [2, rowsAsRegions(10)],
+  ] as const)("never shrinks a %i-star region below the floor", (stars, regions) => {
+    const start = regionGroups(regions);
+    const expectFloor = (layout: Grid<number | null>) => {
+      const groups = regionGroups(layout);
+      expect(groups.size).toBe(start.size);
+      for (const [id, cells] of groups) {
+        expect(cells.length).toBeGreaterThanOrEqual(Math.min(MIN_REGION[stars], start.get(id)!.length));
+      }
+    };
+    const out = reshape(
+      { size: regions.length, stars, regions: regions.map((row) => [...row]), locked: [] },
+      { random: seeded(2), maxIterations: 150, onProgress: (progress) => expectFloor(progress.regions) },
+    );
+    if (out.type !== "done") throw new Error(out.message);
+    expectFloor(out.regions);
   });
 
   test("never leaves the puzzle without a solution", () => {
