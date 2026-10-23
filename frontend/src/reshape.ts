@@ -22,6 +22,8 @@ export type ReshapeMessage = ({ type: "progress" } & ReshapeProgress) | ReshapeR
 export interface ReshapeOptions {
   random?: () => number;
   maxIterations?: number;
+  /** Give up after this many stalls in a row without a better layout. */
+  maxStalls?: number;
   onProgress?: (progress: ReshapeProgress) => void;
 }
 
@@ -82,7 +84,7 @@ function targetChoices(input: SolverInput, locked: Set<number>): Cell[][] {
  * The score does not depend on the target, so the best layout stays comparable across restarts.
  */
 export function reshape(input: ReshapeInput, options: ReshapeOptions = {}): ReshapeResult {
-  const { random = Math.random, maxIterations = Infinity, onProgress } = options;
+  const { random = Math.random, maxIterations = Infinity, maxStalls = Infinity, onProgress } = options;
   const { size, stars } = input;
   const floor = MIN_REGION[stars as StarCount];
   const issues = validate(input);
@@ -218,8 +220,9 @@ export function reshape(input: ReshapeInput, options: ReshapeOptions = {}): Resh
 
   for (let i = 1; i <= maxIterations && best.score > 0; ) {
     if (since >= STALL) {
+      if (best.score < unbalanced && ++stalls > maxStalls) break;
       // Targets drawn from the best layout can share its ambiguity, so repeated stalls need a fresh one.
-      if (best.score >= unbalanced || ++stalls % JUMP_AFTER === 0) jump(best.regions);
+      if (best.score >= unbalanced || stalls % JUMP_AFTER === 0) jump(best.regions);
       else retarget(best.regions);
       state = evaluate(best.regions);
       since = 0;

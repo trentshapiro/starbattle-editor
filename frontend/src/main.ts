@@ -2,6 +2,7 @@ import "./style.css";
 import { Board, drawGrid } from "./board";
 import { checkPuzzle } from "./check";
 import { PALETTE, regionColor, unusedColor } from "./colors";
+import type { GenerateInput, GenerateMessage, GenerateProgress } from "./generate";
 import { helpItems } from "./help";
 import { History } from "./history";
 import { loadState, parsePuzzleHash, puzzleHash, saveState } from "./io";
@@ -45,6 +46,7 @@ const ui = {
   share: $<HTMLButtonElement>("share"),
   check: $<HTMLButtonElement>("check"),
   reshape: $<HTMLButtonElement>("reshape"),
+  generate: $<HTMLButtonElement>("generate"),
   toolbar: $("toolbar"),
   boardActions: $("board-actions"),
   help: $("help"),
@@ -74,6 +76,11 @@ const SUMMARY: Record<CheckStatus, { title: string; detail: string; tone: string
 };
 
 const SEARCH_LIMIT_MS = 60_000;
+const GENERATE_TIMEOUT =
+  `No layout with one solution that logic alone can reach turned up in ${SEARCH_LIMIT_MS / 1000} seconds.`;
+const SEARCH_TITLE = { reshape: "Find unique", generate: "Generate new" };
+
+type SearchKind = keyof typeof SEARCH_TITLE;
 
 type Stroke = { kind: "region"; region: number | null } | { kind: "x"; erase: boolean };
 
@@ -84,7 +91,12 @@ let autoMark = saved.autoMark ?? true;
 let check: CheckResult | null = null;
 let failure: { title: string; detail: string } | null = null;
 let checking = false;
-let search: { worker: Worker; timer: ReturnType<typeof setTimeout>; progress: ReshapeProgress | null } | null = null;
+let search: {
+  kind: SearchKind;
+  worker: Worker;
+  timer: ReturnType<typeof setTimeout>;
+  progress: ReshapeProgress | GenerateProgress | null;
+} | null = null;
 let pendingSize: number | null = null;
 let snapshot: Puzzle | null = null;
 let stroke: Stroke | null = null;
@@ -204,16 +216,20 @@ function render() {
   ui.redo.disabled = busy || !history.canRedo;
   ui.check.disabled = busy || checking;
   ui.check.textContent = checking ? "Checking..." : "Check constraints";
-  ui.reshape.disabled = checking;
-  ui.reshape.hidden = mode !== "edit";
-  ui.reshape.textContent = busy ? "Stop" : "Find unique";
+  for (const kind of ["reshape", "generate"] as const) {
+    const button = ui[kind];
+    button.disabled = checking || (busy && search?.kind !== kind);
+    button.hidden = mode !== "edit";
+    button.textContent = search?.kind === kind ? "Stop" : SEARCH_TITLE[kind];
+  }
   if (ui.help.dataset.mode !== mode) {
     ui.help.dataset.mode = mode;
     ui.help.replaceChildren(...HELP[mode]);
   }
 
   // While searching, the board previews the best layout so far without changing the puzzle.
-  const shown = search?.progress ? { ...puzzle, regions: search.progress.regions } : puzzle;
+  const base = search?.kind === "generate" ? blankPuzzle(puzzle.size, puzzle.stars) : puzzle;
+  const shown = search?.progress ? { ...base, regions: search.progress.regions } : puzzle;
   const auto = autoMark ? autoMarks(shown) : null;
   const errors = violations(shown, auto);
   const issues = new Set(check?.issues.flatMap((issue) => issue.cells.map(key)) ?? []);
@@ -221,7 +237,7 @@ function render() {
   drawGrid(board.el, shown.regions, shown.colors, (el, r, c) => {
     if (issues.has(key([r, c]))) el.classList.add("issue");
     if (locked.has(shown.regions[r][c]!)) el.classList.add("locked");
-    const mark = puzzle.marks[r][c];
+    const mark = shown.marks[r][c];
     if (mark === "star") glyph(el, "star");
     else if (mark === "x") glyph(el, "x");
     else if (auto?.[r][c]) glyph(el, "auto-x");
@@ -238,7 +254,10 @@ function renderStatus() {
   ui.status.classList.remove("solved");
   if (search) {
     const progress = search.progress;
-    const parts = [progress ? `Searching, step ${progress.iterations}` : "Searching"];
+    const steps = [search.kind === "reshape" ? "Searching" : "Generating"];
+    if (progress && "attempt" in progress) steps.push(`layout ${progress.attempt}`);
+    if (progress) steps.push(`step ${progress.iterations}`);
+    const parts = [steps.join(", ")];
     if (progress?.ambiguous === null) parts.push("Giving each region its share of stars");
     else if (progress) parts.push(`${progress.ambiguous} cells can still hold a star in another solution`);
     ui.status.textContent = parts.join(". ");
@@ -346,13 +365,17 @@ async function runCheck() {
   render();
 }
 
-function startSearch() {
+function startSearch(kind: SearchKind) {
   const { size, stars, regions, locked } = puzzle;
-  const worker = new Worker(new URL("./reshape.worker.ts", import.meta.url), { type: "module" });
-  search = { worker, timer: setTimeout(() => finishSearch(null), SEARCH_LIMIT_MS), progress: null };
+  const worker =
+    kind === "reshape"
+      ? new Worker(new URL("./reshape.worker.ts", import.meta.url), { type: "module" })
+      : new Worker(new URL("./generate.worker.ts", import.meta.url), { type: "module" });
+  const timeout = () => finishSearch(kind === "reshape" ? null : { type: "error", message: GENERATE_TIMEOUT });
+  search = { kind, worker, timer: setTimeout(timeout, SEARCH_LIMIT_MS), progress: null };
   closePicker();
   clearCheck();
-  worker.onmessage = (e: MessageEvent<ReshapeMessage>) => {
+  worker.onmessage = (e: MessageEvent<ReshapeMessage | GenerateMessage>) => {
     if (e.data.type !== "progress") finishSearch(e.data);
     else if (search) {
       search.progress = e.data;
@@ -360,19 +383,36 @@ function startSearch() {
     }
   };
   worker.onerror = (e) => finishSearch({ type: "error", message: e.message || "The search failed." });
-  worker.postMessage({ size, stars, regions, locked } satisfies ReshapeInput);
+  worker.postMessage(
+    kind === "reshape"
+      ? ({ size, stars, regions, locked } satisfies ReshapeInput)
+      : ({ size, stars } satisfies GenerateInput),
+  );
   render();
 }
 
-/** A null outcome means the user stopped the search or it ran out of time. */
+/** A null outcome means the user stopped the search, or Find unique ran out of time. */
 function finishSearch(outcome: ReshapeResult | null) {
   if (!search) return;
-  const { worker, timer, progress } = search;
+  const { kind, worker, timer, progress } = search;
   worker.terminate();
   clearTimeout(timer);
   search = null;
   if (outcome?.type === "error") {
-    failure = { title: "Find unique failed", detail: outcome.message };
+    failure = { title: `${SEARCH_TITLE[kind]} failed`, detail: outcome.message };
+    render();
+    return;
+  }
+  if (kind === "generate") {
+    if (outcome) {
+      change(() => {
+        puzzle.regions = outcome.regions;
+        puzzle.marks = makeGrid<Mark>(puzzle.size, "");
+        puzzle.colors = {};
+        puzzle.locked = [];
+      });
+      check = outcome.result;
+    }
     render();
     return;
   }
@@ -537,7 +577,8 @@ ui.clearRegions.addEventListener("click", () =>
 ui.share.addEventListener("click", copyLink);
 window.addEventListener("hashchange", openLink);
 ui.check.addEventListener("click", runCheck);
-ui.reshape.addEventListener("click", () => (search ? finishSearch(null) : startSearch()));
+ui.reshape.addEventListener("click", () => (search ? finishSearch(null) : startSearch("reshape")));
+ui.generate.addEventListener("click", () => (search ? finishSearch(null) : startSearch("generate")));
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closePicker();
